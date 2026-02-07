@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -15,16 +14,16 @@
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-  ctx.font = "20px Arial";
-  ctx.textBaseline = "alphabetic";
+ctx.font = "20px Arial";
+ctx.textBaseline = "alphabetic";
 
 const bg = new Image();
 bg.src = "bg.png";
 
 const ground = 520;
 
-const p1 = { x:200, y:ground-120, w:60, h:120, hp:100 };
-const p2 = { x:840, y:ground-120, w:60, h:120, hp:100 };
+const p1 = { x:200, y:ground-120, w:60, h:120, hp:100, attacking:false };
+const p2 = { x:840, y:ground-120, w:60, h:120, hp:100, attacking:false };
 
 const keys = {};
 onkeydown = e => keys[e.key] = true;
@@ -39,27 +38,36 @@ function drawHealth(x, y, hp, name) {
   ctx.fillText(name, x, y - 5);
 }
 
+function hit(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
 function update() {
   if (keys["a"]) p1.x -= 4;
   if (keys["d"]) p1.x += 4;
   if (keys["ArrowLeft"]) p2.x -= 4;
   if (keys["ArrowRight"]) p2.x += 4;
+
+  if (keys["f"]) p1.attacking = true;
+  if (keys["k"]) p2.attacking = true;
+
+  p1.x = Math.max(0, Math.min(canvas.width - p1.w, p1.x));
+  p2.x = Math.max(0, Math.min(canvas.width - p2.w, p2.x));
 }
 
 function draw() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // Always paint something
   ctx.fillStyle = "#222";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // Background if available
   if (bg.complete && bg.naturalWidth > 0) {
     ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Loading bg.png...", 20, 80);
-    ctx.fillText("If this never changes, open /bg.png to verify.", 20, 110);
   }
 
   // Fighters
@@ -69,11 +77,29 @@ function draw() {
   ctx.fillStyle = "#fff";
   ctx.fillRect(p2.x, p2.y, p2.w, p2.h);
 
+  // Attacks
+  if (p1.attacking) {
+    const hb1 = { x:p1.x+p1.w, y:p1.y+40, w:30, h:20 };
+    ctx.fillStyle = "rgba(255,0,0,0.5)";
+    ctx.fillRect(hb1.x, hb1.y, hb1.w, hb1.h);
+    if (hit(hb1, p2)) p2.hp = Math.max(0, p2.hp - 1);
+  }
+
+  if (p2.attacking) {
+    const hb2 = { x:p2.x-30, y:p2.y+40, w:30, h:20 };
+    ctx.fillStyle = "rgba(255,0,0,0.5)";
+    ctx.fillRect(hb2.x, hb2.y, hb2.w, hb2.h);
+    if (hit(hb2, p1)) p1.hp = Math.max(0, p1.hp - 1);
+  }
+
+  // reset attacks each frame
+  p1.attacking = false;
+  p2.attacking = false;
+
   // Health bars
   drawHealth(50, 40, p1.hp, "GIL BATO");
   drawHealth(750, 40, p2.hp, "RALPH MACCHIO");
 }
-
 
 function loop() {
   update();
@@ -85,5 +111,6 @@ requestAnimationFrame(loop);
 </script>
 </body>
 </html>
+
 
 
