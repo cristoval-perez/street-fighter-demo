@@ -16,15 +16,12 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-ctx.font = "18px Arial";
-ctx.textBaseline = "alphabetic";
-
 const W = canvas.width;
 const H = canvas.height;
 const ground = 520;
 
-const bg = new Image();
-bg.src = "bg.png";
+ctx.font = "18px Arial";
+ctx.textBaseline = "alphabetic";
 
 const keys = Object.create(null);
 addEventListener("keydown", (e) => {
@@ -35,52 +32,96 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => keys[e.key] = false);
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function hit(a, b) {
+function rectHit(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-function makeFighter(name, x, color, controls) {
+function loadImage(src) {
+  const img = new Image();
+  img.src = src;
+  img.ok = false;
+  img.onload = () => img.ok = true;
+  img.onerror = () => img.ok = false;
+  return img;
+}
+
+const assets = {
+  bg: loadImage("bg.png"),
+  gil: {
+    idle:  loadImage("gil_idle.png"),
+    punch: loadImage("gil_punch.png"),
+    kick:  loadImage("gil_kick.png"),
+    jump:  loadImage("gil_jump.png"),
+  },
+  ralph: {
+    idle:  loadImage("ralph_idle.png"),
+    punch: loadImage("ralph_punch.png"),
+    kick:  loadImage("ralph_kick.png"),
+    jump:  loadImage("ralph_jump.png"),
+  },
+  spark: loadImage("spark.png"),
+  dust:  loadImage("dust.png"),
+};
+
+function makeFighter(opts) {
   return {
-    name,
-    x,
+    name: opts.name,
+    side: opts.side,
+    x: opts.x,
     y: ground - 120,
     w: 64,
     h: 120,
-    color,
     hp: 100,
     vx: 0,
     vy: 0,
     onGround: true,
-    face: 1,
-    controls,
+    face: opts.side === "left" ? 1 : -1,
+    controls: opts.controls,
     cooldown: 0,
     stun: 0,
-    attack: null,   // { type:"punch"|"kick", t:number, didHit:boolean }
+    attack: null, // { type, t, didHit }
+    landedTimer: 0,
+    sprites: opts.sprites,
+    draw: {
+      ox: -48,
+      oy: -30,
+      w: 160,
+      h: 160
+    }
   };
 }
 
-const p1 = makeFighter("GIL BATO", 220, "#9a4f00", {
-  left: "a",
-  right: "d",
-  jump: "w",
-  punch: "f",
-  kick: "g"
+const p1 = makeFighter({
+  name: "GIL BATO",
+  side: "left",
+  x: 220,
+  controls: { left:"a", right:"d", jump:"w", punch:"f", kick:"g" },
+  sprites: assets.gil
 });
 
-const p2 = makeFighter("RALPH MACCHIO", 820, "#ffffff", {
-  left: "ArrowLeft",
-  right: "ArrowRight",
-  jump: "ArrowUp",
-  punch: "k",
-  kick: "l"
+const p2 = makeFighter({
+  name: "RALPH MACCHIO",
+  side: "right",
+  x: 820,
+  controls: { left:"ArrowLeft", right:"ArrowRight", jump:"ArrowUp", punch:"k", kick:"l" },
+  sprites: assets.ralph
 });
+
+const effects = {
+  shake: 0,
+  spark: null, // {x,y,t}
+  dust: []     // [{x,y,t}]
+};
 
 function reset() {
-  p1.x = 220; p1.y = ground - p1.h; p1.hp = 100; p1.vx = 0; p1.vy = 0; p1.onGround = true; p1.cooldown = 0; p1.stun = 0; p1.attack = null;
-  p2.x = 820; p2.y = ground - p2.h; p2.hp = 100; p2.vx = 0; p2.vy = 0; p2.onGround = true; p2.cooldown = 0; p2.stun = 0; p2.attack = null;
+  p1.x = 220; p1.y = ground - p1.h; p1.hp = 100; p1.vx = 0; p1.vy = 0; p1.onGround = true; p1.cooldown = 0; p1.stun = 0; p1.attack = null; p1.landedTimer = 0;
+  p2.x = 820; p2.y = ground - p2.h; p2.hp = 100; p2.vx = 0; p2.vy = 0; p2.onGround = true; p2.cooldown = 0; p2.stun = 0; p2.attack = null; p2.landedTimer = 0;
+  effects.shake = 0;
+  effects.spark = null;
+  effects.dust = [];
 }
 
-function drawHealth(x, y, hp, name, alignRight) {
+function drawHealth(x, y, hp, name) {
   const barW = 360;
   const barH = 18;
 
@@ -97,7 +138,6 @@ function drawHealth(x, y, hp, name, alignRight) {
   ctx.fillStyle = "#00ff00";
   ctx.fillRect(x, y, w, barH);
 
-  // Optional small markers
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   for (let i = 1; i <= 9; i++) ctx.fillRect(x + i*(barW/10), y, 1, barH);
 }
@@ -109,7 +149,7 @@ function startAttack(p, type) {
   if (p.cooldown > 0) return;
 
   p.attack = { type, t: 0, didHit: false };
-  p.cooldown = type === "kick" ? 28 : 22; // frames at ~60fps
+  p.cooldown = type === "kick" ? 30 : 24;
 }
 
 function attackHitbox(p) {
@@ -126,75 +166,78 @@ function applyHit(attacker, defender, type) {
   const dmg = type === "kick" ? 14 : 10;
   defender.hp = clamp(defender.hp - dmg, 0, 100);
 
-  defender.stun = 10; // frames
+  defender.stun = 10;
+
   const push = type === "kick" ? 36 : 28;
   defender.x += attacker.face * push;
   defender.x = clamp(defender.x, 0, W - defender.w);
+
+  effects.shake = 8;
+  const sx = defender.x + defender.w / 2;
+  const sy = defender.y + 56;
+  effects.spark = { x: sx, y: sy, t: 10 };
 }
 
 function updateFighter(p, opp) {
-  // Face opponent
   p.face = (opp.x + opp.w/2) >= (p.x + p.w/2) ? 1 : -1;
 
-  // Timers
   if (p.cooldown > 0) p.cooldown -= 1;
   if (p.stun > 0) p.stun -= 1;
 
-  // Stop input after KO
+  const wasOnGround = p.onGround;
+
   if (p.hp <= 0) {
     p.vx *= 0.85;
-    return;
+  } else {
+    let move = 0;
+
+    if (p.stun <= 0) {
+      if (keys[p.controls.left]) move -= 1;
+      if (keys[p.controls.right]) move += 1;
+    }
+
+    const speed = 220;
+    p.vx = move * speed;
+
+    if (p.stun <= 0 && keys[p.controls.jump] && p.onGround) {
+      p.vy = -520;
+      p.onGround = false;
+    }
+
+    if (keys[p.controls.punch]) startAttack(p, "punch");
+    if (keys[p.controls.kick]) startAttack(p, "kick");
   }
 
-  const speed = 220;
-  const jumpV = -520;
   const gravity = 1500;
-
-  let move = 0;
-  const leftDown = !!keys[p.controls.left];
-  const rightDown = !!keys[p.controls.right];
-  const jumpDown = !!keys[p.controls.jump];
-
-  if (p.stun <= 0) {
-    if (leftDown) move -= 1;
-    if (rightDown) move += 1;
-  }
-
-  p.vx = move * speed;
-
-  if (p.stun <= 0 && jumpDown && p.onGround) {
-    p.vy = jumpV;
-    p.onGround = false;
-  }
-
-  if (keys[p.controls.punch]) startAttack(p, "punch");
-  if (keys[p.controls.kick]) startAttack(p, "kick");
-
-  // Physics
   p.vy += gravity * (1/60);
   p.x += p.vx * (1/60);
   p.y += p.vy * (1/60);
 
-  // Ground
   if (p.y + p.h >= ground) {
     p.y = ground - p.h;
     p.vy = 0;
     p.onGround = true;
+  } else {
+    p.onGround = false;
   }
 
-  // Bounds
   p.x = clamp(p.x, 0, W - p.w);
 
-  // Attack timing
+  if (!wasOnGround && p.onGround) {
+    p.landedTimer = 10;
+    effects.dust.push({ x: p.x + p.w/2, y: ground - 6, t: 14 });
+  }
+  if (p.landedTimer > 0) p.landedTimer -= 1;
+
   if (p.attack) {
-    p.attack.t += 1; // frames
-    const activeStart = 6;                         // ~0.10s
+    p.attack.t += 1;
+    const activeStart = 6;
     const activeEnd = p.attack.type === "kick" ? 18 : 14;
     const end = p.attack.type === "kick" ? 26 : 22;
 
     if (!p.attack.didHit && p.attack.t >= activeStart && p.attack.t <= activeEnd) {
       const hb = attackHitbox(p);
-      if (hit(hb, opp) && opp.hp > 0) {
+      if (rectHit(hb, opp) && opp.hp > 0) {
         p.attack.didHit = true;
         applyHit(p, opp, p.attack.type);
       }
@@ -204,43 +247,107 @@ function updateFighter(p, opp) {
   }
 }
 
+function pickSprite(p) {
+  if (!p.onGround) {
+    if (p.sprites.jump && p.sprites.jump.ok) return p.sprites.jump;
+  }
+  if (p.attack) {
+    if (p.attack.type === "punch" && p.sprites.punch && p.sprites.punch.ok) return p.sprites.punch;
+    if (p.attack.type === "kick" && p.sprites.kick && p.sprites.kick.ok) return p.sprites.kick;
+  }
+  if (p.sprites.idle && p.sprites.idle.ok) return p.sprites.idle;
+  return null;
+}
+
+function drawSpriteFacing(img, x, y, w, h, face) {
+  ctx.save();
+  if (face === -1) {
+    ctx.translate(x + w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, y, w, h);
+  } else {
+    ctx.drawImage(img, x, y, w, h);
+  }
+  ctx.restore();
+}
+
 function drawBackground() {
   ctx.fillStyle = "#222";
   ctx.fillRect(0, 0, W, H);
 
-  if (bg.complete && bg.naturalWidth > 0) {
-    ctx.drawImage(bg, 0, 0, W, H);
-  } else {
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Loading bg.png...", 20, 40);
+  if (assets.bg.ok) {
+    ctx.drawImage(assets.bg, 0, 0, W, H);
   }
 }
 
 function drawFighter(p) {
-  ctx.fillStyle = p.color;
-  ctx.fillRect(p.x, p.y, p.w, p.h);
+  const img = pickSprite(p);
 
-  // Simple head marker
-  ctx.fillStyle = "rgba(0,0,0,0.35)";
-  ctx.fillRect(p.x + 18, p.y + 10, 28, 24);
-
-  // Attack hitbox overlay
-  if (p.attack) {
-    const hb = attackHitbox(p);
-    ctx.fillStyle = "rgba(255,0,0,0.4)";
-    ctx.fillRect(hb.x, hb.y, hb.w, hb.h);
+  if (img) {
+    const dx = p.x + p.draw.ox;
+    const dy = p.y + p.draw.oy;
+    drawSpriteFacing(img, dx, dy, p.draw.w, p.draw.h, p.face);
+  } else {
+    ctx.fillStyle = p.side === "left" ? "#9a4f00" : "#ffffff";
+    ctx.fillRect(p.x, p.y, p.w, p.h);
   }
 
-  // Stun marker
   if (p.stun > 0) {
     ctx.fillStyle = "rgba(255,255,0,0.5)";
     ctx.fillRect(p.x, p.y - 10, p.w, 6);
   }
 }
 
+function drawEffects() {
+  for (let i = effects.dust.length - 1; i >= 0; i--) {
+    const d = effects.dust[i];
+    d.t -= 1;
+    const alpha = clamp(d.t / 14, 0, 1);
+
+    if (assets.dust.ok) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(assets.dust, d.x - 28, d.y - 28, 56, 56);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.fillStyle = "#ddd";
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (d.t <= 0) effects.dust.splice(i, 1);
+  }
+
+  if (effects.spark) {
+    effects.spark.t -= 1;
+    const s = effects.spark;
+    const alpha = clamp(s.t / 10, 0, 1);
+
+    if (assets.spark.ok) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(assets.spark, s.x - 28, s.y - 28, 56, 56);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(s.x - 10, s.y - 2, 20, 4);
+      ctx.fillRect(s.x - 2, s.y - 10, 4, 20);
+      ctx.restore();
+    }
+
+    if (s.t <= 0) effects.spark = null;
+  }
+}
+
 function drawUI() {
-  drawHealth(40, 46, p1.hp, p1.name, false);
-  drawHealth(W - 40 - 360, 46, p2.hp, p2.name, true);
+  drawHealth(40, 46, p1.hp, p1.name);
+  drawHealth(W - 40 - 360, 46, p2.hp, p2.name);
 
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.fillRect(40, H - 44, W - 80, 28);
@@ -260,25 +367,34 @@ function drawKO() {
 
   ctx.font = "22px Arial";
   const winner = p1.hp <= 0 ? p2.name : p1.name;
-  ctx.fillText(winner + " WINS", W/2 - 100, H/2 + 34);
-  ctx.fillText("Press R to restart", W/2 - 105, H/2 + 70);
+  ctx.fillText(winner + " WINS", W/2 - 120, H/2 + 34);
+  ctx.fillText("Press R to restart", W/2 - 115, H/2 + 70);
 
   ctx.font = "18px Arial";
 }
 
 function loop() {
-  // Update
-  if (p1.hp > 0 && p2.hp > 0) {
-    updateFighter(p1, p2);
-    updateFighter(p2, p1);
+  updateFighter(p1, p2);
+  updateFighter(p2, p1);
+
+  let sx = 0, sy = 0;
+  if (effects.shake > 0) {
+    effects.shake -= 1;
+    sx = (Math.random() * 6) - 3;
+    sy = (Math.random() * 6) - 3;
   }
 
-  // Draw
+  ctx.save();
+  ctx.translate(sx, sy);
+
   drawBackground();
   drawFighter(p1);
   drawFighter(p2);
+  drawEffects();
   drawUI();
   drawKO();
+
+  ctx.restore();
 
   requestAnimationFrame(loop);
 }
@@ -287,6 +403,7 @@ requestAnimationFrame(loop);
 </script>
 </body>
 </html>
+
 
 
 
