@@ -1,133 +1,74 @@
+
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gil Bato vs Ralph Macchio</title>
-  <style>
-    html, body { margin:0; height:100%; background:#111; }
-    canvas { display:block; margin:0 auto; background:#000; image-rendering:auto; }
-  </style>
+<meta charset="utf-8">
+<title>Gil Bato vs Ralph Macchio</title>
+<style>
+  body { margin:0; background:#111; }
+  canvas { display:block; margin:auto; background:#000; }
+</style>
 </head>
 <body>
-<canvas id="c" width="1100" height="620"></canvas>
+<canvas id="game" width="1100" height="620"></canvas>
 
 <script>
-(() => {
-  const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d");
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
 
-  const W = canvas.width, H = canvas.height;
-  const groundY = 520;
+const bg = new Image();
+bg.src = "bg.png";
 
-  const bg = new Image();
-  bg.src = "bg.png";
+const ground = 520;
 
-  const keys = new Set();
-  addEventListener("keydown", (e) => {
-    const k = e.key.toLowerCase();
-    keys.add(k);
-    if (k === "r") reset();
-    // Stop page scroll for arrows
-    if (["arrowleft","arrowright","arrowup","arrowdown"," "].includes(e.key)) e.preventDefault();
-  }, { passive:false });
-  addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+const p1 = { x:200, y:ground-120, w:60, h:120, hp:100 };
+const p2 = { x:840, y:ground-120, w:60, h:120, hp:100 };
 
-  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
-  function rectsOverlap(a,b){
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+const keys = {};
+onkeydown = e => keys[e.key] = true;
+onkeyup = e => keys[e.key] = false;
+
+function drawHealth(x, y, hp, name) {
+  ctx.fillStyle = "#333";
+  ctx.fillRect(x, y, 300, 20);
+  ctx.fillStyle = "#0f0";
+  ctx.fillRect(x, y, 3 * hp, 20);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(name, x, y - 5);
+}
+
+function update() {
+  if (keys["a"]) p1.x -= 4;
+  if (keys["d"]) p1.x += 4;
+  if (keys["ArrowLeft"]) p2.x -= 4;
+  if (keys["ArrowRight"]) p2.x += 4;
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  if (bg.complete) {
+    ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
   }
 
-  class Fighter {
-    constructor(opts){
-      Object.assign(this, opts);
-      this.resetState();
-    }
-    resetState(){
-      this.vx = 0; this.vy = 0;
-      this.onGround = true;
-      this.face = this.side === "left" ? 1 : -1; // 1 faces right, -1 faces left
-      this.hp = 100;
-      this.stun = 0;
-      this.attack = null; // {type, t, hitDone}
-      this.flash = 0;
-    }
-    bodyRect(){
-      return { x:this.x, y:this.y, w:this.w, h:this.h };
-    }
-    hitboxRect(){
-      const reach = this.attack?.type === "kick" ? 60 : 45;
-      const hbW = reach, hbH = this.attack?.type === "kick" ? 24 : 18;
-      const hbX = this.face === 1 ? (this.x + this.w) : (this.x - hbW);
-      const hbY = this.y + (this.attack?.type === "kick" ? 56 : 50);
-      return { x:hbX, y:hbY, w:hbW, h:hbH };
-    }
-    startAttack(type){
-      if (this.stun > 0) return;
-      if (this.attack) return;
-      this.attack = { type, t:0, hitDone:false };
-    }
-    update(dt, opponent){
-      if (this.hp <= 0) return;
+  ctx.fillStyle = "#964B00";
+  ctx.fillRect(p1.x, p1.y, p1.w, p1.h);
 
-      // Face opponent
-      this.face = (opponent.x + opponent.w/2) >= (this.x + this.w/2) ? 1 : -1;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(p2.x, p2.y, p2.w, p2.h);
 
-      if (this.stun > 0) this.stun -= dt;
-      if (this.flash > 0) this.flash -= dt;
+  drawHealth(50, 40, p1.hp, "GIL BATO");
+  drawHealth(750, 40, p2.hp, "RALPH MACCHIO");
+}
 
-      // Movement input
-      const speed = 220;
-      const jumpV = -520;
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
 
-      if (this.stun <= 0) {
-        let move = 0;
-        if (keys.has(this.controls.left)) move -= 1;
-        if (keys.has(this.controls.right)) move += 1;
-        this.vx = move * speed;
+bg.onload = loop;
+</script>
+</body>
+</html>
 
-        if (keys.has(this.controls.jump) && this.onGround) {
-          this.vy = jumpV;
-          this.onGround = false;
-        }
-
-        if (keys.has(this.controls.punch)) this.startAttack("punch");
-        if (keys.has(this.controls.kick)) this.startAttack("kick");
-      } else {
-        this.vx *= 0.85;
-      }
-
-      // Attack timing
-      if (this.attack) {
-        this.attack.t += dt;
-        const activeStart = 0.10;
-        const activeEnd = this.attack.type === "kick" ? 0.30 : 0.24;
-        const end = this.attack.type === "kick" ? 0.44 : 0.36;
-
-        if (!this.attack.hitDone && this.attack.t >= activeStart && this.attack.t <= activeEnd) {
-          const hb = this.hitboxRect();
-          if (rectsOverlap(hb, opponent.bodyRect()) && opponent.hp > 0) {
-            this.attack.hitDone = true;
-            const dmg = this.attack.type === "kick" ? 14 : 10;
-            opponent.takeHit(dmg, this.face);
-          }
-        }
-        if (this.attack.t >= end) this.attack = null;
-      }
-
-      // Physics
-      const gravity = 1500;
-      this.vy += gravity * dt;
-
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
-
-      // Ground
-      if (this.y + this.h >= groundY) {
-        this.y = groundY - this.h;
-        this.vy = 0;
-        this.onGround = true;
-      }
-
-      // Bounds
-      this.x = clamp(this
